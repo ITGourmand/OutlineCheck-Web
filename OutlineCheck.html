@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OutlineCheck Web - Pixel Art Analyzer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background-color: #1a1b1e; color: #e0e0e0; }
+        
+        .canvas-container {
+            background-image: 
+                linear-gradient(45deg, #25262b 25%, transparent 25%), 
+                linear-gradient(-45deg, #25262b 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #25262b 75%), 
+                linear-gradient(-45deg, transparent 75%, #25262b 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+            background-color: #141517;
+            image-rendering: pixelated; 
+            transform-origin: center center;
+            transition: transform 0.1s ease-out;
+            display: inline-block;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        }
+        
+        .pixel-overlay { pointer-events: none; position: absolute; top: 0; left: 0; image-rendering: pixelated; }
+
+        .folder-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+        .folder-open .folder-content { max-height: 1000px; }
+
+        #scrollContainer { cursor: grab; outline: none; }
+        #scrollContainer:active { cursor: grabbing; }
+
+        .lock-btn { padding: 4px; border-radius: 4px; transition: 0.2s; color: #5c5f66; }
+        .lock-btn:hover { background: rgba(252, 125, 43, 0.15); color: #fc7d2b; }
+        .lock-btn.locked { color: #fc7d2b; background: rgba(252, 125, 43, 0.1); }
+
+        /* Modal Rescale */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); display: none; align-items: center; justify-content: center; z-index: 100;
+        }
+        .modal-content {
+            background: #25262b; padding: 24px; border-radius: 12px; border: 1px solid #373a40;
+            width: 380px; box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+        }
+
+        /* Drag over effect */
+        .drag-over { border: 2px dashed #fc7d2b !important; background: rgba(252, 125, 43, 0.05) !important; }
+        
+        input[type="number"]::-webkit-inner-spin-button, 
+        input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden text-sm">
+
+    <!-- Modal Rescale -->
+    <div id="rescaleModal" class="modal-overlay">
+        <div class="modal-content">
+            <h3 class="text-lg font-bold text-[#fc7d2b] mb-2">Import Settings</h3>
+            <p id="originalDimLabel" class="text-[10px] text-gray-500 font-mono mb-4 uppercase tracking-widest">Original: 0x0</p>
+            
+            <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-[10px] text-gray-500 uppercase mb-1 font-bold">Scaling Mode</label>
+                        <select id="rescaleFactor" class="w-full bg-[#1a1b1e] border border-[#373a40] p-2 rounded text-white outline-none focus:border-[#fc7d2b]">
+                            <option value="custom">Custom Size</option>
+                            <option value="2">1/2x (50%)</option>
+                            <option value="3">1/3x (33%)</option>
+                            <option value="4">1/4x (25%)</option>
+                            <option value="8">1/8x (12.5%)</option>
+                        </select>
+                    </div>
+                    <div id="customWidthGroup" class="opacity-30 pointer-events-none transition-opacity">
+                        <label class="block text-[10px] text-gray-500 uppercase mb-1 font-bold">Target Width</label>
+                        <div class="relative">
+                            <input type="number" id="customWidthInput" class="w-full bg-[#1a1b1e] border border-[#373a40] p-2 rounded text-white outline-none focus:border-[#fc7d2b]" placeholder="Width">
+                            <span id="targetHeightLabel" class="absolute right-2 top-2 text-[10px] text-gray-600 font-mono pt-0.5">x 0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2 bg-[#1a1b1e] p-2 rounded border border-[#373a40]/50">
+                    <input type="checkbox" id="rescaleNearest" checked class="accent-[#fc7d2b] w-4 h-4">
+                    <label for="rescaleNearest" class="text-xs cursor-pointer select-none text-gray-300">Nearest Neighbor (Sharp)</label>
+                </div>
+
+                <div class="flex gap-2 pt-2">
+                    <button id="cancelImport" class="flex-1 px-4 py-2.5 bg-[#2c2e33] hover:bg-[#373a40] rounded-md font-bold transition text-gray-400">CANCEL</button>
+                    <button id="confirmImport" class="flex-1 px-4 py-2.5 bg-[#fc7d2b] hover:bg-[#ff9248] text-white rounded-md font-bold transition shadow-lg shadow-[#fc7d2b]/20">IMPORT IMAGE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="bg-[#1a1b1e] border-b border-[#2c2e33] p-3 flex justify-between items-center z-20">
+        <div class="flex items-center gap-3">
+            <img src="./OutlineCheck.ico" alt="Logo" class="w-6 h-6 object-contain">
+            <h1 class="text-lg font-bold tracking-tight text-[#fc7d2b]">OUTLINECHECK <span class="text-gray-600 text-[10px] font-medium align-top ml-1">WEB</span></h1>
+        </div>
+        <div class="flex gap-4 items-center">
+            <div id="zoomLevelDisplay" class="text-gray-500 font-mono text-[10px] bg-[#141517] px-2 py-1 rounded border border-[#2c2e33] hidden">ZOOM: 100%</div>
+            <input type="file" id="fileInput" accept="image/*" class="hidden">
+            <label for="fileInput" class="cursor-pointer bg-[#fc7d2b]/10 hover:bg-[#fc7d2b]/20 text-[#fc7d2b] border border-[#fc7d2b]/30 px-4 py-1.5 rounded-md transition font-bold flex items-center gap-2 text-xs uppercase tracking-wide">
+                <i class="fa-solid fa-folder-open"></i> Open File
+            </label>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden relative" id="dropZone">
+        
+        <!-- Sidebar -->
+        <aside class="w-72 bg-[#1a1b1e] border-r border-[#2c2e33] flex flex-col z-10 shadow-2xl">
+            <div class="p-4 border-b border-[#2c2e33] bg-[#1a1b1e]">
+                <button id="toggleOutlineBtn" class="w-full bg-[#25262b] hover:bg-[#2c2e33] text-gray-400 py-2 px-3 rounded-md text-[10px] font-bold border border-[#2c2e33] transition flex justify-between items-center uppercase tracking-widest">
+                    <span>VIEW: ALL COLORS</span>
+                    <i class="fa-solid fa-eye text-[#fc7d2b]"></i>
+                </button>
+            </div>
+
+            <div id="resultsPanel" class="flex-1 overflow-y-auto p-2 space-y-1">
+                <div class="text-center text-gray-600 mt-28 px-8">
+                    <i class="fa-solid fa-cloud-arrow-up text-4xl mb-4 opacity-10"></i><br>
+                    <p class="text-xs uppercase font-bold tracking-widest opacity-40">Drag & Drop Image</p>
+                    <p class="text-[10px] mt-2 leading-relaxed opacity-30">Supports PNG, JPG, BMP. Optimized for pixel art.</p>
+                </div>
+            </div>
+
+            <div id="statsPanel" class="p-3 border-t border-[#2c2e33] bg-[#141517] text-[10px] text-gray-500 font-mono flex justify-between"></div>
+        </aside>
+
+        <!-- Canvas Area -->
+        <main class="flex-1 relative bg-[#141517]" id="mainArea">
+            <div class="w-full h-full overflow-auto flex items-center justify-center" id="scrollContainer">
+                <!-- Initial State -->
+                <div id="emptyState" class="text-center pointer-events-none group">
+                    <div class="mb-6 inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-[#1a1b1e] border border-[#2c2e33] shadow-2xl">
+                         <i class="fa-solid fa-plus text-[#fc7d2b] text-3xl opacity-20 group-hover:opacity-100 transition-opacity"></i>
+                    </div>
+                    <p class="text-[10px] uppercase font-bold tracking-[0.2em] text-gray-600">Waiting for input...</p>
+                </div>
+
+                <div class="relative canvas-container hidden" id="canvasWrapper">
+                    <canvas id="sourceCanvas" class="block"></canvas>
+                    <canvas id="overlayCanvas" class="pixel-overlay"></canvas>
+                </div>
+            </div>
+            
+            <div class="absolute bottom-6 left-1/2 -translate-x-1/2 zoom-hint bg-black/80 backdrop-blur-md px-4 py-2 rounded-full text-[10px] text-gray-400 border border-white/10 pointer-events-none transition-all opacity-0 shadow-2xl flex items-center gap-4" id="hintBox">
+                <span><i class="fa-solid fa-mouse text-[#fc7d2b] mr-1"></i> Scroll to Zoom</span>
+                <span class="w-px h-3 bg-gray-700"></span>
+                <span><i class="fa-solid fa-up-down-left-right text-[#fc7d2b] mr-1"></i> Drag to Pan</span>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Detection Logic
+        const ERROR_COLORS = { "CL": "#730073", "OT": "#FF00C8", "SC": "#FF0000", "OSC":"#FF9B00", "CR": "#FFFF00" };
+        const ERROR_NAMES = { "CL": "Clusters", "OT": "OutLines Touching", "SC": "Staircases", "OSC": "Optional Staircases", "CR": "Corner" };
+        
+        const PATTERNS = {
+            CL_1: [[2, 1, 1], [2, 3, 1], [2, 2, 2]],
+            CL_2: [[1, 1, 2], [1, 3, 2], [2, 2, 2]],
+            OT:   [[2, 1, 0], [2, 3, 1], [2, 1, 0]],
+            BASE: [[2, 1, 0], [2, 3, 1], [0, 2, 2]],
+            OSC_1:[[2, 4, 0], [2, 3, 2], [0, 2, 2]],
+            OSC_2:[[2, 2, 0], [2, 3, 4], [0, 2, 2]],
+            SC:   [[2, 4, 0], [2, 3, 4], [0, 2, 2]]
+        };
+
+        function rotate90(m) {
+            let r = Array.from({length:3},()=>new Array(3));
+            for(let y=0;y<3;y++) for(let x=0;x<3;x++) r[x][2-y]=m[y][x];
+            return r;
+        }
+        function getRots(m) { let res=[m]; for(let i=0;i<3;i++) res.push(m=rotate90(m)); return res; }
+        const ROTATIONS = {
+            CL: [...getRots(PATTERNS.CL_1), ...getRots(PATTERNS.CL_2)],
+            OT: getRots(PATTERNS.OT),
+            BASE: getRots(PATTERNS.BASE),
+            OSC: [...getRots(PATTERNS.OSC_1), ...getRots(PATTERNS.OSC_2)],
+            SC: getRots(PATTERNS.SC)
+        };
+
+        // UI State
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const sourceCanvas = document.getElementById('sourceCanvas');
+        const overlayCanvas = document.getElementById('overlayCanvas');
+        const canvasWrapper = document.getElementById('canvasWrapper');
+        const emptyState = document.getElementById('emptyState');
+        const resultsPanel = document.getElementById('resultsPanel');
+        const rescaleModal = document.getElementById('rescaleModal');
+        const scrollContainer = document.getElementById('scrollContainer');
+        const hintBox = document.getElementById('hintBox');
+        
+        const rescaleFactor = document.getElementById('rescaleFactor');
+        const customWidthGroup = document.getElementById('customWidthGroup');
+        const customWidthInput = document.getElementById('customWidthInput');
+        const targetHeightLabel = document.getElementById('targetHeightLabel');
+        const originalDimLabel = document.getElementById('originalDimLabel');
+
+        let currentScale = 1;
+        let currentAnalysis = null;
+        let showOnlyOutlines = false;
+        let pendingImage = null;
+
+        // -- File Handling --
+        window.addEventListener('dragover', e => { 
+            e.preventDefault(); 
+            dropZone.classList.add('drag-over'); 
+        });
+        window.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+        window.addEventListener('drop', e => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) processFile(file);
+        });
+
+        fileInput.addEventListener('change', e => { if(e.target.files[0]) processFile(e.target.files[0]); });
+
+        function processFile(file) {
+            const reader = new FileReader();
+            reader.onload = e => {
+                const img = new Image();
+                img.onload = () => {
+                    pendingImage = img;
+                    originalDimLabel.innerText = `Original Size: ${img.width} x ${img.height}`;
+                    customWidthInput.value = img.width;
+                    updateHeightDisplay();
+                    rescaleModal.style.display = 'flex';
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // -- Modal Logic --
+        rescaleFactor.onchange = () => {
+            const isCustom = rescaleFactor.value === 'custom';
+            customWidthGroup.style.opacity = isCustom ? '1' : '0.3';
+            customWidthGroup.style.pointerEvents = isCustom ? 'auto' : 'none';
+        };
+
+        customWidthInput.oninput = updateHeightDisplay;
+
+        function updateHeightDisplay() {
+            if (!pendingImage) return;
+            const w = parseInt(customWidthInput.value) || 0;
+            const h = Math.round((w / pendingImage.width) * pendingImage.height);
+            targetHeightLabel.innerText = `x ${h}`;
+        }
+
+        document.getElementById('confirmImport').onclick = () => {
+            let targetW, targetH;
+            if (rescaleFactor.value === 'custom') {
+                targetW = parseInt(customWidthInput.value) || pendingImage.width;
+                targetH = Math.round((targetW / pendingImage.width) * pendingImage.height);
+            } else {
+                const factor = parseInt(rescaleFactor.value);
+                targetW =  Math.round(pendingImage.width / factor);
+                targetH =  Math.round(pendingImage.height / factor);
+            }
+            
+            const useNearest = document.getElementById('rescaleNearest').checked;
+            rescaleModal.style.display = 'none';
+            applyImport(pendingImage, targetW, targetH, useNearest);
+        };
+        
+        document.getElementById('cancelImport').onclick = () => rescaleModal.style.display = 'none';
+
+        function applyImport(img, w, h, useNearest) {
+            emptyState.classList.add('hidden');
+            canvasWrapper.classList.remove('hidden');
+            hintBox.style.opacity = '1';
+
+            sourceCanvas.width = overlayCanvas.width = w;
+            sourceCanvas.height = overlayCanvas.height = h;
+
+            const ctx = sourceCanvas.getContext('2d');
+            // Logic for Nearest Neighbor vs Smooth
+            ctx.imageSmoothingEnabled = !useNearest;
+            ctx.drawImage(img, 0, 0, w, h);
+            
+            overlayCanvas.getContext('2d').clearRect(0, 0, w, h);
+            
+            // Initial view zoom
+            const autoScale = Math.max(1, Math.min(Math.floor((scrollContainer.clientWidth-100)/w), Math.floor((scrollContainer.clientHeight-100)/h)));
+            currentScale = (w < 128) ? Math.max(autoScale, 4) : autoScale;
+            
+            updateZoom(0);
+            runAnalysis();
+        }
+
+        // -- Zoom & Pan --
+        let isPanning = false, startX, startY, sLeft, sTop;
+        scrollContainer.onmousedown = e => {
+            if(e.button !== 0) return;
+            isPanning = true; startX = e.pageX; startY = e.pageY;
+            sLeft = scrollContainer.scrollLeft; sTop = scrollContainer.scrollTop;
+        };
+        window.onmousemove = e => {
+            if(!isPanning) return;
+            scrollContainer.scrollLeft = sLeft - (e.pageX - startX);
+            scrollContainer.scrollTop = sTop - (e.pageY - startY);
+        };
+        window.onmouseup = () => isPanning = false;
+
+        scrollContainer.onwheel = e => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -1 : 1;
+            updateZoom(delta);
+        };
+
+        function updateZoom(delta) {
+            currentScale = Math.max(1, Math.min(100, currentScale + delta));
+            canvasWrapper.style.transform = `scale(${currentScale})`;
+            const zd = document.getElementById('zoomLevelDisplay');
+            zd.classList.remove('hidden');
+            zd.innerText = `ZOOM: ${Math.round(currentScale * 100)}%`;
+        }
+
+        // -- Analysis Engine --
+        class Analyzer {
+            constructor(canvas) {
+                this.ctx = canvas.getContext('2d', {willReadFrequently:true});
+                this.w = canvas.width; this.h = canvas.height;
+                this.pix = new Uint32Array(this.ctx.getImageData(0,0,this.w,this.h).data.buffer);
+                this.errors = []; this.mask = new Set(); this.outlines = new Set();
+            }
+            getM(x,y,c) {
+                let m = Array.from({length:3},()=>new Array(3).fill(false));
+                for(let j=-1;j<=1;j++) for(let i=-1;i<=1;i++){
+                    let nx=x+i, ny=y+j;
+                    if(nx>=0 && nx<this.w && ny>=0 && ny<this.h && this.pix[ny*this.w+nx]===c) m[j+1][i+1]=true;
+                }
+                return m;
+            }
+            checkP(p,m) {
+                for(let y=0;y<3;y++) for(let x=0;x<3;x++) {
+                    let v=p[y][x]; if(v===2)continue;
+                    if((v===3||v===1)&&!m[y][x]) return false;
+                    if(v===0&&m[y][x]) return false;
+                }
+                return true;
+            }
+            isO(x,y) {
+                for(let [dx,dy] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+                    let nx=x+dx, ny=y+dy;
+                    if(nx<0||nx>=this.w||ny<0||ny>=this.h) return true;
+                    if(((this.pix[ny*this.w+nx]>>>24)&0xFF)===0) return true;
+                }
+                return false;
+            }
+            analyze() {
+                for(let i=0; i<this.pix.length; i++) {
+                    if(((this.pix[i]>>>24)&0xFF)>0 && this.isO(i%this.w, Math.floor(i/this.w))) this.outlines.add(this.pix[i]);
+                }
+                for(let y=0;y<this.h;y++) for(let x=0;x<this.w;x++) {
+                    let c=this.pix[y*this.w+x]; if(((c>>>24)&0xFF)<10) continue;
+                    let m=this.getM(x,y,c);
+                    if(ROTATIONS.CL.some(r=>this.checkP(r,m))) { this.errors.push({x,y,c,type:"CL"}); }
+                    else if(ROTATIONS.OT.some(r=>this.checkP(r,m))) { this.errors.push({x,y,c,type:"OT"}); }
+                    else if(ROTATIONS.BASE.some(r=>this.checkP(r,m))) { this.errors.push({x,y,c,type:"CR"}); }
+                }
+                return this.group();
+            }
+            group() {
+                const g = {};
+                const toH = c => "#"+((1<<24)+((c&0xFF)<<16)+(((c>>>8)&0xFF)<<8)+((c>>>16)&0xFF)).toString(16).slice(1).toUpperCase();
+                this.errors.forEach(e => {
+                    let h = toH(e.c);
+                    if(!g[h]) g[h] = { isO: this.outlines.has(e.c), types:{}, locked: false };
+                    if(!g[h].types[e.type]) g[h].types[e.type] = [];
+                    g[h].types[e.type].push(e);
+                });
+                return g;
+            }
+        }
+
+        function runAnalysis() {
+            resultsPanel.innerHTML = '<div class="text-center mt-20 text-gray-600 animate-pulse font-bold tracking-widest text-[10px] uppercase"><i class="fa-solid fa-microchip mb-4 text-2xl block text-[#fc7d2b]"></i>Analyzing...</div>';
+            setTimeout(() => {
+                currentAnalysis = new Analyzer(sourceCanvas).analyze();
+                renderResults();
+                drawOverlay();
+            }, 100);
+        }
+
+        function drawOverlay(highlightColor = null, highlightType = null) {
+            const ctx = overlayCanvas.getContext('2d');
+            ctx.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
+            for(let [hex, data] of Object.entries(currentAnalysis)) {
+                if(showOnlyOutlines && !data.isO) continue;
+                if(!data.locked && highlightColor !== hex) continue;
+                for(let [type, errs] of Object.entries(data.types)) {
+                    if(highlightType && highlightType !== type) continue;
+                    ctx.fillStyle = ERROR_COLORS[type]; ctx.globalAlpha = 0.65;
+                    errs.forEach(e => ctx.fillRect(e.x, e.y, 1, 1));
+                }
+            }
+        }
+
+        function renderResults() {
+            resultsPanel.innerHTML = '';
+            const sorted = Object.keys(currentAnalysis).sort((a,b) => 
+                Object.values(currentAnalysis[b].types).flat().length - Object.values(currentAnalysis[a].types).flat().length
+            );
+            
+            let totalErrs = 0;
+            sorted.forEach(hex => {
+                const data = currentAnalysis[hex];
+                if(showOnlyOutlines && !data.isO) return;
+                const total = Object.values(data.types).flat().length;
+                totalErrs += total;
+
+                const div = document.createElement('div');
+                div.className = 'group rounded-md overflow-hidden border border-transparent hover:border-[#2c2e33] transition-all bg-[#1a1b1e]';
+                div.innerHTML = `
+                    <div class="folder-header flex items-center p-2.5 cursor-pointer select-none">
+                        <div class="w-2.5 h-2.5 rounded-full mr-3 shadow-xl ring-1 ring-white/5" style="background-color: ${hex}"></div>
+                        <span class="flex-1 font-mono text-[10px] text-gray-500 font-bold">${hex} ${data.isO ? '<span class="text-[8px] bg-[#fc7d2b]/20 text-[#fc7d2b] px-1 rounded ml-1 tracking-tighter">OUTLINE</span>' : ''}</span>
+                        <div class="flex items-center gap-2">
+                             <span class="text-[9px] text-gray-700 font-black px-1.5 py-0.5 rounded bg-[#141517]">${total}</span>
+                             <button class="lock-btn ${data.locked?'locked':''}"><i class="fa-solid ${data.locked?'fa-lock':'fa-lock-open'} text-[9px]"></i></button>
+                             <i class="fa-solid fa-chevron-right text-[8px] text-gray-800 transition-transform group-[.folder-open]:rotate-90"></i>
+                        </div>
+                    </div>
+                    <div class="folder-content bg-[#141517]/30">
+                        ${Object.keys(data.types).map(t => `
+                            <div class="type-row flex justify-between p-2 pl-9 text-[9px] text-gray-600 font-bold hover:bg-[#25262b] cursor-default border-t border-white/5" data-type="${t}">
+                                <div class="flex items-center gap-2"><div class="w-1.5 h-1.5 rounded-full" style="background-color: ${ERROR_COLORS[t]}"></div>${ERROR_NAMES[t].toUpperCase()}</div>
+                                <span>${data.types[t].length}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+
+                const header = div.querySelector('.folder-header');
+                header.onmouseenter = () => drawOverlay(hex);
+                header.onmouseleave = () => drawOverlay();
+                header.onclick = e => {
+                    if(e.target.closest('.lock-btn')) {
+                        const btn = e.target.closest('.lock-btn');
+                        data.locked = !data.locked;
+                        btn.classList.toggle('locked', data.locked);
+                        btn.querySelector('i').className = `fa-solid ${data.locked?'fa-lock':'fa-lock-open'} text-[9px]`;
+                        drawOverlay();
+                        return;
+                    }
+                    div.classList.toggle('folder-open');
+                };
+
+                div.querySelectorAll('.type-row').forEach(row => {
+                    row.onmouseenter = () => drawOverlay(hex, row.dataset.type);
+                    row.onmouseleave = () => drawOverlay(hex);
+                });
+
+                resultsPanel.appendChild(div);
+            });
+            
+            document.getElementById('statsPanel').innerHTML = `
+                <span class="opacity-40 uppercase tracking-widest">Errors Found:</span>
+                <span class="font-bold text-[#fc7d2b]">${totalErrs}</span>
+            `;
+            
+            if (totalErrs === 0 && sorted.length > 0) {
+                resultsPanel.innerHTML = '<div class="text-green-500/50 text-center mt-20 text-[10px] font-bold uppercase tracking-widest"><i class="fa-solid fa-circle-check text-2xl block mb-2 opacity-20"></i>Perfect Outline</div>';
+            }
+        }
+
+        document.getElementById('toggleOutlineBtn').onclick = () => {
+            showOnlyOutlines = !showOnlyOutlines;
+            document.getElementById('toggleOutlineBtn').querySelector('span').innerText = showOnlyOutlines ? "VIEW: OUTLINES ONLY" : "VIEW: ALL COLORS";
+            renderResults();
+        };
+
+    </script>
+</body>
+</html>
