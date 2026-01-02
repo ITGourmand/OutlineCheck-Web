@@ -117,7 +117,7 @@
         <aside class="w-72 bg-[#1a1b1e] border-r border-[#2c2e33] flex flex-col z-10 shadow-2xl">
             <div class="p-4 border-b border-[#2c2e33] bg-[#1a1b1e]">
                 <button id="toggleOutlineBtn" class="w-full bg-[#25262b] hover:bg-[#2c2e33] text-gray-400 py-2 px-3 rounded-md text-[10px] font-bold border border-[#2c2e33] transition flex justify-between items-center uppercase tracking-widest">
-                    <span>VIEW: ALL COLORS</span>
+                    <span>VIEW: OUTLINES ONLY</span>
                     <i class="fa-solid fa-eye text-[#fc7d2b]"></i>
                 </button>
             </div>
@@ -206,7 +206,7 @@
 
         let currentScale = 1;
         let currentAnalysis = null;
-        let showOnlyOutlines = false;
+        let showOnlyOutlines = true;
         let pendingImage = null;
 
         // -- File Handling --
