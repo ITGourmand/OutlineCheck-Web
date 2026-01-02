@@ -247,7 +247,7 @@
             customWidthGroup.style.opacity = isCustom ? '1' : '0.3';
             customWidthGroup.style.pointerEvents = isCustom ? 'auto' : 'none';
         };
-
+        rescaleFactor.onchange();
         customWidthInput.oninput = updateHeightDisplay;
 
         function updateHeightDisplay() {
